@@ -25,23 +25,35 @@ on:
         type: string
         default: "1.9.5"
       azure_client_id:
-        required: true
+        required: false
         type: string
+        default: ""
+        description: "Optional override for Azure Client ID. Defaults to vars.AZURE_CLIENT_ID from environment."
       azure_tenant_id:
-        required: true
+        required: false
         type: string
+        default: ""
+        description: "Optional override for Azure Tenant ID. Defaults to vars.AZURE_TENANT_ID."
       azure_subscription_id:
-        required: true
+        required: false
         type: string
+        default: ""
+        description: "Optional override for Azure Subscription ID. Defaults to vars.AZURE_SUBSCRIPTION_ID from environment."
 
 jobs:
   validate_and_plan:
     name: "Validate & Plan (${{ inputs.environment }})"
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     permissions:
       id-token: write
       contents: read
       pull-requests: write
+
+    env:
+      AZURE_CLIENT_ID: ${{ inputs.azure_client_id != '' && inputs.azure_client_id || vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ inputs.azure_tenant_id != '' && inputs.azure_tenant_id || vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id != '' && inputs.azure_subscription_id || vars.AZURE_SUBSCRIPTION_ID }}
 
     steps:
       - name: Checkout Code
@@ -59,9 +71,9 @@ jobs:
       - name: Azure OIDC Login
         uses: azure/login@v2
         with:
-          client-id: ${{ inputs.azure_client_id }}
-          tenant-id: ${{ inputs.azure_tenant_id }}
-          subscription-id: ${{ inputs.azure_subscription_id }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Terraform Init
         run: |
@@ -69,9 +81,9 @@ jobs:
             -backend-config="${{ inputs.backend_config_file }}"
         working-directory: ${{ inputs.working_directory }}
         env:
-          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
-          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
-          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
 
@@ -89,9 +101,9 @@ jobs:
             -no-color
         working-directory: ${{ inputs.working_directory }}
         env:
-          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
-          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
-          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
 
@@ -113,6 +125,11 @@ jobs:
       id-token: write
       contents: read
 
+    env:
+      AZURE_CLIENT_ID: ${{ inputs.azure_client_id != '' && inputs.azure_client_id || vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ inputs.azure_tenant_id != '' && inputs.azure_tenant_id || vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id != '' && inputs.azure_subscription_id || vars.AZURE_SUBSCRIPTION_ID }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -125,9 +142,9 @@ jobs:
       - name: Azure OIDC Login
         uses: azure/login@v2
         with:
-          client-id: ${{ inputs.azure_client_id }}
-          tenant-id: ${{ inputs.azure_tenant_id }}
-          subscription-id: ${{ inputs.azure_subscription_id }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Download Plan Artifact
         uses: actions/download-artifact@v4
@@ -141,9 +158,9 @@ jobs:
             -backend-config="${{ inputs.backend_config_file }}"
         working-directory: ${{ inputs.working_directory }}
         env:
-          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
-          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
-          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
 
@@ -151,9 +168,9 @@ jobs:
         run: terraform apply -lock-timeout=15m tfplan
         working-directory: ${{ inputs.working_directory }}
         env:
-          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
-          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
-          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
 
