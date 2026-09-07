@@ -1,4 +1,4 @@
-name: "Reusable Terraform Pipeline"
+name: "Reusable Stategraph Pipeline"
 
 on:
   workflow_call:
@@ -6,20 +6,16 @@ on:
       environment:
         required: true
         type: string
-        description: "Target environment (dev, test, preprod, prod)"
+        description: "Target environment / workspace (dev, prod, etc.)"
       working_directory:
         required: false
         type: string
         default: "."
-        description: "Directory containing the root Terraform configuration"
-      backend_config_file:
-        required: true
-        type: string
-        description: "Relative path to backend config (e.g. environments/dev/backend.tfvars)"
+        description: "Directory containing the root Terraform configuration and stategraph.json"
       var_file:
         required: true
         type: string
-        description: "Relative path to variables file (e.g. environments/dev/terraform.tfvars)"
+        description: "Relative path to variables file (e.g. environments/dev.tfvars)"
       terraform_version:
         required: false
         type: string
@@ -54,6 +50,15 @@ jobs:
       AZURE_CLIENT_ID: ${{ inputs.azure_client_id != '' && inputs.azure_client_id || vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ inputs.azure_tenant_id != '' && inputs.azure_tenant_id || vars.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id != '' && inputs.azure_subscription_id || vars.AZURE_SUBSCRIPTION_ID }}
+      STATEGRAPH_API_BASE: ${{ vars.STATEGRAPH_API_BASE }}
+      STATEGRAPH_TENANT_ID: ${{ vars.STATEGRAPH_TENANT_ID }}
+      STATEGRAPH_API_KEY: ${{ secrets.STATEGRAPH_API_KEY }}
+      TF_CMD: "terraform"
+      ARM_CLIENT_ID: ${{ inputs.azure_client_id != '' && inputs.azure_client_id || vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ inputs.azure_tenant_id != '' && inputs.azure_tenant_id || vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id != '' && inputs.azure_subscription_id || vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
 
     steps:
       - name: Checkout Code
@@ -63,10 +68,15 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
 
       - name: Check Formatting
         run: terraform fmt -check -recursive
         working-directory: ${{ inputs.working_directory }}
+
+      - name: Install Stategraph CLI
+        run: |
+          curl -fsSL https://get.stategraph.com/install.sh | sudo sh
 
       - name: Azure OIDC Login
         uses: azure/login@v2
@@ -75,45 +85,21 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Terraform Init
-        run: |
-          terraform init \
-            -backend-config="${{ inputs.backend_config_file }}"
-        working-directory: ${{ inputs.working_directory }}
-        env:
-          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: "true"
-          ARM_USE_AZUREAD: "true"
-
-      - name: Terraform Validate
-        run: terraform validate
-        working-directory: ${{ inputs.working_directory }}
-
-      - name: Terraform Plan
+      - name: Stategraph Plan
         id: plan
         run: |
-          terraform plan \
-            -var-file="${{ inputs.var_file }}" \
-            -lock-timeout=10m \
-            -out=tfplan \
-            -no-color
-        working-directory: ${{ inputs.working_directory }}
-        env:
-          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: "true"
-          ARM_USE_AZUREAD: "true"
+          stategraph tf plan \
+            --workspace="${{ inputs.environment }}" \
+            --var-file="${{ inputs.var_file }}" \
+            --no-color 2>&1 | tee plan_output.txt
 
-      - name: Upload Plan Artifact
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}
-          path: ${{ inputs.working_directory }}/tfplan
-          retention-days: 5
+          SUMMARY_LINE=$(grep -E "(Plan: [0-9]+ to add|No changes\.)" plan_output.txt | head -n 1 || echo "Plan completed successfully")
+
+          echo "## 📋 Stategraph Plan: \`${{ inputs.working_directory }}\` (\`${{ inputs.environment }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "**Summary**: \`${SUMMARY_LINE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Full execution details are available in the runner step logs." >> $GITHUB_STEP_SUMMARY
+        working-directory: ${{ inputs.working_directory }}
 
   apply:
     name: "Apply (${{ inputs.environment }})"
@@ -129,6 +115,15 @@ jobs:
       AZURE_CLIENT_ID: ${{ inputs.azure_client_id != '' && inputs.azure_client_id || vars.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ inputs.azure_tenant_id != '' && inputs.azure_tenant_id || vars.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id != '' && inputs.azure_subscription_id || vars.AZURE_SUBSCRIPTION_ID }}
+      STATEGRAPH_API_BASE: ${{ vars.STATEGRAPH_API_BASE }}
+      STATEGRAPH_TENANT_ID: ${{ vars.STATEGRAPH_TENANT_ID }}
+      STATEGRAPH_API_KEY: ${{ secrets.STATEGRAPH_API_KEY }}
+      TF_CMD: "terraform"
+      ARM_CLIENT_ID: ${{ inputs.azure_client_id != '' && inputs.azure_client_id || vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ inputs.azure_tenant_id != '' && inputs.azure_tenant_id || vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id != '' && inputs.azure_subscription_id || vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
 
     steps:
       - name: Checkout Code
@@ -138,6 +133,11 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
+
+      - name: Install Stategraph CLI
+        run: |
+          curl -fsSL https://get.stategraph.com/install.sh | sudo sh
 
       - name: Azure OIDC Login
         uses: azure/login@v2
@@ -146,31 +146,17 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Download Plan Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}
-          path: ${{ inputs.working_directory }}
-
-      - name: Terraform Init
+      - name: Stategraph Apply
         run: |
-          terraform init \
-            -backend-config="${{ inputs.backend_config_file }}"
-        working-directory: ${{ inputs.working_directory }}
-        env:
-          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: "true"
-          ARM_USE_AZUREAD: "true"
+          stategraph tf apply \
+            --workspace="${{ inputs.environment }}" \
+            --var-file="${{ inputs.var_file }}" \
+            --auto-approve 2>&1 | tee apply_output.txt
 
-      - name: Terraform Apply
-        run: terraform apply -lock-timeout=15m tfplan
-        working-directory: ${{ inputs.working_directory }}
-        env:
-          ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          ARM_USE_OIDC: "true"
-          ARM_USE_AZUREAD: "true"
+          APPLY_SUMMARY=$(grep -E "(Apply complete!|Destroy complete!|No changes\.)" apply_output.txt | head -n 1 || echo "Apply completed successfully")
 
+          echo "## 🚀 Stategraph Apply: \`${{ inputs.working_directory }}\` (\`${{ inputs.environment }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "**Summary**: \`${APPLY_SUMMARY}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Full execution details are available in the runner step logs." >> $GITHUB_STEP_SUMMARY
+        working-directory: ${{ inputs.working_directory }}
