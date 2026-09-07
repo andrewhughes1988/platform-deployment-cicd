@@ -95,3 +95,4 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
+
