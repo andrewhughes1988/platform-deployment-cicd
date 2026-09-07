@@ -98,7 +98,6 @@ jobs:
           terraform plan \
             -var-file="${{ inputs.var_file }}" \
             -lock-timeout=10m \
-            -out=tfplan \
             -no-color | tee plan_output.txt
 
           SUMMARY_LINE=$(grep -E "(Plan: [0-9]+ to add|No changes\.)" plan_output.txt | head -n 1 || echo "Plan completed")
@@ -106,7 +105,7 @@ jobs:
           echo "## 📋 Terraform Plan: \`${{ inputs.working_directory }}\` (\`${{ inputs.environment }}\`)" >> $GITHUB_STEP_SUMMARY
           echo "**Summary**: \`${SUMMARY_LINE}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Full execution details are available in the step logs and uploaded artifact." >> $GITHUB_STEP_SUMMARY
+          echo "> Full execution details are available in the runner step logs." >> $GITHUB_STEP_SUMMARY
         working-directory: ${{ inputs.working_directory }}
         env:
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
@@ -114,18 +113,4 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
           ARM_USE_OIDC: "true"
           ARM_USE_AZUREAD: "true"
-
-      - name: Export Human-Readable Plan File
-        run: |
-          terraform show -no-color tfplan > tfplan.txt
-        working-directory: ${{ inputs.working_directory }}
-
-      - name: Upload Plan Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}
-          path: |
-            ${{ inputs.working_directory }}/tfplan
-            ${{ inputs.working_directory }}/tfplan.txt
-          retention-days: 5
 
