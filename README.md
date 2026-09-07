@@ -56,7 +56,7 @@ Provides complete pull-request speculative planning and merge-driven deployment:
 
 ## How Caller Repositories Invoke This Pipeline
 
-In any application or platform repository, place this lightweight 15-line stub at `.github/workflows/deploy.yml`:
+In any application or platform repository, place this lightweight 20-line stub at `.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy Infrastructure
@@ -77,11 +77,49 @@ jobs:
     uses: andrewhughes1988/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@main
     with:
       environment: dev
-      working_directory: compute/container-app-environments
-      backend_config_file: environments/dev/backend.tfvars
-      var_file: environments/dev/terraform.tfvars
-      azure_client_id: ${{ vars.AZURE_CLIENT_ID_DEV }}
+      working_directory: "."
+      backend_config_file: backend/dev.backend.tfvars
+      var_file: environments/dev.tfvars
+      azure_client_id: ${{ vars.AZURE_CLIENT_ID_APP_DEV }}
       azure_tenant_id: ${{ vars.AZURE_TENANT_ID }}
-      azure_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID_DEV }}
+      azure_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID_APP_DEV }}
 ```
+
+---
+
+## How Environment Approvals Work (Delegated Caller Approvals)
+
+A common question in reusable workflows is: *Who approves production deployments? Does the central CI/CD team have to approve everything?*
+
+### Caller-Evaluated Environments
+Because the workflow uses `environment: ${{ inputs.environment }}` inside the reusable `apply` job, GitHub evaluates environment protection rules **inside the caller repository** (e.g., `azure-platform-core` or `app-order-service`):
+
+1. **Autonomous App Governance**: In `app-order-service`, the application team goes to **Settings** &rarr; **Environments** &rarr; `prod` and assigns their Tech Lead and Ops liaison as required reviewers.
+2. **Autonomous Platform Governance**: In `azure-platform-core`, Platform Ops sets their own senior platform engineers as approvers for `prod`.
+3. **No Central Bottleneck**: Central CI/CD administrators are **not** spammed or required to manually approve applications they do not own.
+
+---
+
+## Rogue Repository Defense (Why Teams Cannot Bypass Approvals)
+
+*Could a rogue developer create a new repo, copy the caller stub, set themselves as the approver, and deploy to production?*
+
+**No.** Azure Entra ID enforces **Workload Identity Federation Subject Validation**:
+1. Every Azure Managed Identity / Service Principal requires an explicit Federated Credential mapped to a specific repository:
+   ```text
+   repo:andrewhughes1988/<calling-repo-name>:job_workflow_ref:andrewhughes1988/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@refs/heads/main
+   ```
+2. If a developer creates an unauthorized repository on GitHub, Azure has **no federated credential** registered for that repo name.
+3. When the rogue repo's workflow requests an Azure access token, Entra ID denies the request with `AADSTS70021`. The pipeline fails before executing any Terraform commands.
+
+---
+
+## Golden Template Vending (`app-template-repo`)
+
+To onboard new applications securely:
+1. Teams create their repository using [`app-template-repo`](https://github.com/andrewhughes1988/app-template-repo) ("Use this template").
+2. The template comes pre-packaged with `.github/CODEOWNERS` and `.github/workflows/deploy.yml`.
+3. Platform Ops performs 2 onboarding actions:
+   - Enables Branch Protection on `main` (Require PR + Code Owner review + Status check `Validate & Plan`).
+   - Adds the repo's federated subject identifier in Azure Entra ID.
 
