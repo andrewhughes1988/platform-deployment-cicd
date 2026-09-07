@@ -1,0 +1,159 @@
+name: "Reusable Terraform Pipeline"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: "Target environment (dev, test, preprod, prod)"
+      working_directory:
+        required: false
+        type: string
+        default: "."
+        description: "Directory containing the root Terraform configuration"
+      backend_config_file:
+        required: true
+        type: string
+        description: "Relative path to backend config (e.g. environments/dev/backend.tfvars)"
+      var_file:
+        required: true
+        type: string
+        description: "Relative path to variables file (e.g. environments/dev/terraform.tfvars)"
+      terraform_version:
+        required: false
+        type: string
+        default: "1.9.5"
+      azure_client_id:
+        required: true
+        type: string
+      azure_tenant_id:
+        required: true
+        type: string
+      azure_subscription_id:
+        required: true
+        type: string
+
+jobs:
+  validate_and_plan:
+    name: "Validate & Plan (${{ inputs.environment }})"
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Check Formatting
+        run: terraform fmt -check -recursive
+        working-directory: ${{ inputs.working_directory }}
+
+      - name: Azure OIDC Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.azure_client_id }}
+          tenant-id: ${{ inputs.azure_tenant_id }}
+          subscription-id: ${{ inputs.azure_subscription_id }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="${{ inputs.backend_config_file }}"
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ inputs.working_directory }}
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var-file="${{ inputs.var_file }}" \
+            -lock-timeout=10m \
+            -out=tfplan \
+            -no-color
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+
+      - name: Upload Plan Artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}/tfplan
+          retention-days: 5
+
+  apply:
+    name: "Apply (${{ inputs.environment }})"
+    needs: validate_and_plan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Azure OIDC Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.azure_client_id }}
+          tenant-id: ${{ inputs.azure_tenant_id }}
+          subscription-id: ${{ inputs.azure_subscription_id }}
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: ${{ inputs.working_directory }}
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="${{ inputs.backend_config_file }}"
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+
+      - name: Terraform Apply
+        run: terraform apply -lock-timeout=15m tfplan
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ARM_CLIENT_ID: ${{ inputs.azure_client_id }}
+          ARM_TENANT_ID: ${{ inputs.azure_tenant_id }}
+          ARM_SUBSCRIPTION_ID: ${{ inputs.azure_subscription_id }}
+          ARM_USE_OIDC: "true"
+          ARM_USE_AZUREAD: "true"
+
