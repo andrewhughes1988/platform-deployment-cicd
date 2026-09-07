@@ -80,8 +80,15 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Terraform Init (Plugins & Providers)
+        run: terraform init -backend=false
+        working-directory: ${{ inputs.working_directory }}
+
       - name: Stategraph Apply
+        shell: bash
         run: |
+          set -eo pipefail
+
           stategraph tf apply \
             --workspace="${{ inputs.environment }}" \
             --var-file="${{ inputs.var_file }}" \

@@ -85,13 +85,23 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Terraform Init (Plugins & Providers)
+        run: terraform init -backend=false
+        working-directory: ${{ inputs.working_directory }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ inputs.working_directory }}
+
       - name: Stategraph Plan
         id: plan
+        shell: bash
         run: |
+          set -eo pipefail
+
           stategraph tf plan \
             --workspace="${{ inputs.environment }}" \
-            --var-file="${{ inputs.var_file }}" \
-            --no-color 2>&1 | tee plan_output.txt
+            --var-file="${{ inputs.var_file }}" 2>&1 | tee plan_output.txt
 
           SUMMARY_LINE=$(grep -E "(Plan: [0-9]+ to add|No changes\.)" plan_output.txt | head -n 1 || echo "Plan completed successfully")
 
@@ -146,8 +156,15 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Terraform Init (Plugins & Providers)
+        run: terraform init -backend=false
+        working-directory: ${{ inputs.working_directory }}
+
       - name: Stategraph Apply
+        shell: bash
         run: |
+          set -eo pipefail
+
           stategraph tf apply \
             --workspace="${{ inputs.environment }}" \
             --var-file="${{ inputs.var_file }}" \
@@ -158,5 +175,5 @@ jobs:
           echo "## 🚀 Stategraph Apply: \`${{ inputs.working_directory }}\` (\`${{ inputs.environment }}\`)" >> $GITHUB_STEP_SUMMARY
           echo "**Summary**: \`${APPLY_SUMMARY}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Full execution details are available in the runner step logs." >> $GITHUB_STEP_SUMMARY
+          echo "> Full execution details are available in the step logs." >> $GITHUB_STEP_SUMMARY
         working-directory: ${{ inputs.working_directory }}

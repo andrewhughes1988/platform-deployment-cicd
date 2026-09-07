@@ -85,13 +85,23 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Terraform Init (Plugins & Providers)
+        run: terraform init -backend=false
+        working-directory: ${{ inputs.working_directory }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ inputs.working_directory }}
+
       - name: Stategraph Plan
         id: plan
+        shell: bash
         run: |
+          set -eo pipefail
+
           stategraph tf plan \
             --workspace="${{ inputs.environment }}" \
-            --var-file="${{ inputs.var_file }}" \
-            --no-color 2>&1 | tee plan_output.txt
+            --var-file="${{ inputs.var_file }}" 2>&1 | tee plan_output.txt
 
           SUMMARY_LINE=$(grep -E "(Plan: [0-9]+ to add|No changes\.)" plan_output.txt | head -n 1 || echo "Plan completed successfully")
 
