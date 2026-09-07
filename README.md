@@ -1,8 +1,52 @@
 # Central CI/CD Workflows (`platform-deployment-cicd`)
 
-This repository serves as the single source of truth for **all Terraform deployment pipelines and quality guardrails** across the enterprise.
+This repository serves as the single source of truth for **all Terraform deployment pipelines, quality guardrails, and Stategraph execution workflows** across the enterprise.
 
-Workload and Platform repositories invoke these reusable workflows via GitHub's `workflow_call`, ensuring strict consistency for formatting, linting, security scanning (Trivy), state locking timeouts, and Azure OIDC authentication.
+Workload and Platform repositories invoke these reusable workflows via GitHub's `workflow_call`, ensuring strict consistency for formatting, linting, security scanning (Trivy), Stategraph Velocity execution, and Azure OIDC authentication.
+
+---
+
+## Stategraph Velocity & CI/CD Architecture
+
+This CI/CD ecosystem uses **[Stategraph](https://stategraph.com)** to execute parallel plans and applies with resource-level locking:
+
+```
++-------------------------------------------------------------------------+
+| GITHUB ACTIONS RUNNER                                                   |
+|                                                                         |
+| 1. Environment Injection (Zero Hardcoding):                             |
+|    - STATEGRAPH_API_BASE: ${{ vars.STATEGRAPH_API_BASE }}               |
+|    - STATEGRAPH_TENANT_ID: ${{ vars.STATEGRAPH_TENANT_ID }}             |
+|    - STATEGRAPH_API_KEY: ${{ secrets.STATEGRAPH_API_KEY }}             |
+|                                                                         |
+| 2. Quality & Security Scans:                                            |
+|    - terraform fmt -check                                               |
+|    - tflint (Azure ruleset)                                             |
+|    - trivy config (CVE & misconfiguration scans)                        |
+|                                                                         |
+| 3. Azure OIDC Exchange (Federated Credential verified by Entra ID)       |
+|                                                                         |
+| 4. Stategraph Execution:                                                |
+|    - Reads stategraph.json in working-directory                         |
+|    - stategraph plan --workspace <env>                                  |
+|    - stategraph apply --workspace <env> --auto-approve                   |
++------------------------------------+------------------------------------+
+                                     |
+                                     v
++-------------------------------------------------------------------------+
+| STATEGRAPH CLOUD                                                        |
+|                                                                         |
+| - Locks only the exact resources being modified (Resource-Level Locking) |
+| - Rejects conflicting commits automatically without corrupting state    |
+| - Multiple PRs touching disjoint resources apply concurrently           |
++-------------------------------------------------------------------------+
+```
+
+### Zero-Hardcoding Configuration
+Workflows never hardcode API keys, tenant IDs, or server endpoints:
+- **`STATEGRAPH_API_KEY`**: Sourced from GitHub Actions Environment Secrets (isolated between `dev` and `prod`).
+- **`STATEGRAPH_API_BASE`**: Sourced from GitHub Actions Variables (`vars.STATEGRAPH_API_BASE`).
+- **`STATEGRAPH_TENANT_ID`**: Sourced from GitHub Actions Variables (`vars.STATEGRAPH_TENANT_ID`).
 
 ---
 
@@ -15,7 +59,7 @@ When GitHub Actions requests an Azure access token using Workload Identity Feder
 
 In your Azure App Registration or User-Assigned Managed Identity, add a **Federated Credential** with the following Subject Identifier:
 
-```
+```text
 repo:andrewhughes1988/<calling-repo-name>:job_workflow_ref:andrewhughes1988/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@refs/heads/main
 ```
 
@@ -27,10 +71,10 @@ repo:andrewhughes1988/<calling-repo-name>:job_workflow_ref:andrewhughes1988/plat
 
 ## Branch Protection & CODEOWNERS Setup (GitHub Team / Free)
 
-To prevent developers from tampering with the 10-line caller stub in their repositories:
+To prevent developers from tampering with the caller stub in their repositories:
 
 1. Add a `.github/CODEOWNERS` file in every caller repo:
-   ```
+   ```text
    .github/workflows/**   @andrewhughes1988
    ```
 2. Enable standard GitHub **Branch Protection** on `main`:
@@ -42,21 +86,26 @@ Developers can modify infrastructure code freely, but cannot merge any pipeline 
 
 ---
 
-## Available Workflows
+## Available Reusable Workflows
 
-### [`terraform-pipeline.yml`](./.github/workflows/terraform-pipeline.yml)
+### 1. `terraform-pipeline.yml`
+Unified pull-request plan and merge apply workflow for micro-repositories and single-stack projects:
+1. **Quality Gates**: `terraform fmt`, `tflint`, and `trivy` static analysis.
+2. **Azure OIDC Exchange**: Exchanges GitHub token for Azure federated access.
+3. **Stategraph Speculative Plan**: Executes `stategraph plan` and updates a sticky comment on the PR.
+4. **Stategraph Apply**: On merge to `main`, executes `stategraph apply --auto-approve` with environment approvals.
 
-Provides complete pull-request speculative planning and merge-driven deployment:
-1. **Quality Gates**: `terraform fmt -check`, `tflint`, and `trivy` static analysis.
-2. **Azure OIDC Login**: Secure token exchange (`azure/login@v2`).
-3. **Speculative Planning**: Generates plan with `-lock-timeout=10m` and posts summary comments to PRs.
-4. **Controlled Apply**: Applies plan artifact on merge to `main` with environment gates.
+### 2. `terraform-plan.yml`
+Modular, reusable plan workflow designed for matrix execution in monorepos (`azure-platform-core`). Generates high-level change summaries in `$GITHUB_STEP_SUMMARY` without exposing sensitive resource bodies or uploading plan files to external storage.
+
+### 3. `terraform-apply.yml`
+Modular, reusable apply workflow designed for manual gated deployments or post-merge execution in monorepos. Evaluates environment protection rules inside the caller repository and applies changes via Stategraph.
 
 ---
 
 ## How Caller Repositories Invoke This Pipeline
 
-In any application or platform repository, place this lightweight 20-line stub at `.github/workflows/deploy.yml`:
+In any application or platform repository, place this lightweight stub at `.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy Infrastructure
@@ -78,48 +127,19 @@ jobs:
     with:
       environment: dev
       working_directory: "."
-      backend_config_file: backend/dev.backend.tfvars
       var_file: environments/dev.tfvars
       azure_client_id: ${{ vars.AZURE_CLIENT_ID_APP_DEV }}
       azure_tenant_id: ${{ vars.AZURE_TENANT_ID }}
       azure_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID_APP_DEV }}
+    secrets:
+      STATEGRAPH_API_KEY: ${{ secrets.STATEGRAPH_API_KEY }}
 ```
 
 ---
 
-## How Environment Approvals Work (Delegated Caller Approvals)
+## Concurrent Pull Requests & Blast Radius
 
-A common question in reusable workflows is: *Who approves production deployments? Does the central CI/CD team have to approve everything?*
-
-### Caller-Evaluated Environments
-Because the workflow uses `environment: ${{ inputs.environment }}` inside the reusable `apply` job, GitHub evaluates environment protection rules **inside the caller repository** (e.g., `azure-platform-core` or `app-order-service`):
-
-1. **Autonomous App Governance**: In `app-order-service`, the application team goes to **Settings** &rarr; **Environments** &rarr; `prod` and assigns their Tech Lead and Ops liaison as required reviewers.
-2. **Autonomous Platform Governance**: In `azure-platform-core`, Platform Ops sets their own senior platform engineers as approvers for `prod`.
-3. **No Central Bottleneck**: Central CI/CD administrators are **not** spammed or required to manually approve applications they do not own.
-
----
-
-## Rogue Repository Defense (Why Teams Cannot Bypass Approvals)
-
-*Could a rogue developer create a new repo, copy the caller stub, set themselves as the approver, and deploy to production?*
-
-**No.** Azure Entra ID enforces **Workload Identity Federation Subject Validation**:
-1. Every Azure Managed Identity / Service Principal requires an explicit Federated Credential mapped to a specific repository:
-   ```text
-   repo:andrewhughes1988/<calling-repo-name>:job_workflow_ref:andrewhughes1988/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@refs/heads/main
-   ```
-2. If a developer creates an unauthorized repository on GitHub, Azure has **no federated credential** registered for that repo name.
-3. When the rogue repo's workflow requests an Azure access token, Entra ID denies the request with `AADSTS70021`. The pipeline fails before executing any Terraform commands.
-
----
-
-## Golden Template Vending (`app-template-repo`)
-
-To onboard new applications securely:
-1. Teams create their repository using [`app-template-repo`](https://github.com/andrewhughes1988/app-template-repo) ("Use this template").
-2. The template comes pre-packaged with `.github/CODEOWNERS` and `.github/workflows/deploy.yml`.
-3. Platform Ops performs 2 onboarding actions:
-   - Enables Branch Protection on `main` (Require PR + Code Owner review + Status check `Validate & Plan`).
-   - Adds the repo's federated subject identifier in Azure Entra ID.
-
+Because Stategraph locks per resource rather than per state file:
+- Two PRs modifying disjoint resources (e.g. adding different VMs or different route table entries) plan and apply concurrently.
+- If two PRs modify the same resource simultaneously, Stategraph detects the conflicting transaction ID at commit and safely fails the second apply with instructions to re-plan.
+- No `force-unlock` commands or serialized queue bottlenecks are ever required.
