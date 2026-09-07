@@ -62,6 +62,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
 
       - name: Azure OIDC Login
         uses: azure/login@v2
@@ -87,7 +88,14 @@ jobs:
           terraform apply \
             -var-file="${{ inputs.var_file }}" \
             -lock-timeout=15m \
-            -auto-approve
+            -auto-approve | tee apply_output.txt
+
+          APPLY_SUMMARY=$(grep -E "(Apply complete!|No changes\.)" apply_output.txt | head -n 1 || echo "Apply finished")
+
+          echo "## 🚀 Terraform Apply: \`${{ inputs.working_directory }}\` (\`${{ inputs.environment }}\`)" >> $GITHUB_STEP_SUMMARY
+          echo "**Summary**: \`${APPLY_SUMMARY}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Full execution details are available in the step logs." >> $GITHUB_STEP_SUMMARY
         working-directory: ${{ inputs.working_directory }}
         env:
           ARM_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
