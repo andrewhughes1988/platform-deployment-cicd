@@ -16,7 +16,7 @@ When GitHub Actions requests an Azure access token using Workload Identity Feder
 In your Azure App Registration or User-Assigned Managed Identity, add a **Federated Credential** with the following Subject Identifier:
 
 ```
-repo:your-org/<calling-repo-name>:job_workflow_ref:your-org/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@refs/heads/main
+repo:andrewhughes1988/<calling-repo-name>:job_workflow_ref:andrewhughes1988/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@refs/heads/main
 ```
 
 ### Result:
@@ -31,7 +31,7 @@ To prevent developers from tampering with the 10-line caller stub in their repos
 
 1. Add a `.github/CODEOWNERS` file in every caller repo:
    ```
-   .github/workflows/**   @your-org/cloud-platform-admins
+   .github/workflows/**   @andrewhughes1988
    ```
 2. Enable standard GitHub **Branch Protection** on `main`:
    - [x] **Require a pull request before merging**
@@ -74,7 +74,7 @@ permissions:
 
 jobs:
   terraform:
-    uses: your-org/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@main
+    uses: andrewhughes1988/platform-deployment-cicd/.github/workflows/terraform-pipeline.yml@main
     with:
       environment: dev
       working_directory: compute/container-app-environments
